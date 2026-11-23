@@ -4,7 +4,7 @@ import { icon } from '../icons.js';
 import { Llm, MODEL_IDS, MODEL_NAMES, fmtGB } from './llm.js';
 import { AtlasSearch } from './search.js';
 import { Profile } from './profile.js';
-import { Recorder, Asr, Speaker } from './voice.js';
+import { Recorder, Asr, Speaker, PIPER_VOICES, PIPER_MB } from './voice.js';
 import { Agent, SUGGESTIONS } from './agent.js';
 
 const fmtSize = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1).replace('.', ',')} ГБ` : b >= 1048576 ? `${Math.round(b / 1048576)} МБ` : `${Math.max(1, Math.round(b / 1024))} КБ`);
@@ -62,7 +62,7 @@ export class AssistantPanel {
     this.initMini();
     this.llm.on(() => this.onLlm());
     this.asr.on(() => this.onAsr());
-    this.speaker.on(() => this.updateButtons());
+    this.speaker.on(() => this.onSpeaker());
     this.profile.persist();
     this.profile.init().then(() => this.agent.load()).catch(() => {}).then(() => this.renderLog());
     this.updateStatus();
@@ -454,6 +454,7 @@ export class AssistantPanel {
       } catch (err) { console.warn('Список моделей недоступен', err); }
     }
     if (llm.supported) await this.refreshCached();
+    if (this.speaker.have.size) this.speaker.syncPiper();
     if (this.view !== 'main' || !this.setEl.classList.contains('on')) return;
     const models = this.models || MODEL_IDS.map((id) => ({ id, name: MODEL_NAMES[id], mb: 0, available: true }));
     const docs = this.profile.list();
@@ -470,7 +471,10 @@ export class AssistantPanel {
       <div class="as-ctl" id="as-asr">${this.asrCtl()}</div>
       <h2 class="sec">Озвучка</h2>
       <div class="list"><button class="row" data-act="speak-toggle" role="switch" aria-checked="${this.speaker.enabled}"${this.speaker.ok ? '' : ' disabled'}>
-        <span class="row-main"><span class="row-title">Озвучивать ответы</span><span class="row-lat plain">${esc(this.speaker.voiceLabel())}</span></span><span class="switch"></span></button></div>
+        <span class="row-main"><span class="row-title">Озвучивать ответы</span><span class="row-lat plain" id="as-voice-label">${esc(this.speaker.voiceLabel())}</span></span><span class="switch"></span></button></div>
+      <h2 class="sec">Голос</h2>
+      <div class="list" id="as-voice">${this.voiceRows()}</div>
+      <p class="note">Голоса Piper звучат естественнее системного и работают без сети, каждый около ${PIPER_MB} МБ. Если голос не сработал, ответ прочитает системный</p>
       <p class="note">Мини-ассистент на вкладке «Атлас» озвучивает ответы всегда. Нажатие на микрофон во время речи останавливает её</p>
       <h2 class="sec">Мои данные</h2>
       <div class="list">${docs.length ? docs.map((d) => this.docRow(d)).join('') : '<div class="empty small">Документов пока нет</div>'}</div>
@@ -507,6 +511,47 @@ export class AssistantPanel {
     if (llm.ready) return `<p class="note">Модель в памяти и отвечает на вопросы</p><div class="btn-row two"><button class="btn small" data-act="unload">Выгрузить из памяти</button>${trash}</div>`;
     if (this.cached.get(llm.modelId)) return `${err}<div class="btn-row two"><button class="btn small accent" data-act="load">Загрузить в память</button>${trash}</div>`;
     return `${err}<button class="btn wide" data-act="download"${m && !m.available ? ' disabled' : ''}>${icon('download', 20)}<span>Скачать модель${size ? ` · ${size}` : ''}</span></button>`;
+  }
+
+  voiceRows() {
+    const sp = this.speaker, cur = sp.usePiper ? sp.piperId : '';
+    const radio = (on) => `<span class="radio">${on ? icon('check', 14) : ''}</span>`;
+    const sys = `<button class="row${cur ? '' : ' on'}" data-act="voice" data-id=""${sp.sys ? '' : ' disabled'}>${radio(!cur)}
+      <span class="row-main"><span class="row-title">Системный</span><span class="row-lat plain">${esc(sp.sys ? sp.voice?.name || 'Голос устройства' : 'Недоступен в этом браузере')}</span></span></button>`;
+    return sys + PIPER_VOICES.map((v) => {
+      const on = cur === v.id, have = sp.have.has(v.id), dl = sp.dl.get(v.id), id = esc(v.id);
+      const pct = dl != null ? Math.round(dl * 100) : 0;
+      const sub = [v.sub, dl != null ? `загрузка ${pct}%` : have ? 'скачан' : `${PIPER_MB} МБ`].join(' · ');
+      const acts = dl != null ? `<button class="vbtn" disabled>${pct}%</button>`
+        : have ? `<button class="vbtn" data-act="voice-play" data-id="${id}">Прослушать</button><button class="vbtn danger" data-act="voice-del" data-id="${id}">Удалить</button>`
+        : `<button class="vbtn" data-act="voice-dl" data-id="${id}"${sp.audio ? '' : ' disabled'}>${icon('download', 16)}<span>Скачать</span></button>`;
+      return `<div class="row-wrap"><button class="row${on ? ' on' : ''}" data-act="voice" data-id="${id}">${radio(on)}
+        <span class="row-main"><span class="row-title">${esc(v.name)}</span><span class="row-lat plain">${esc(sub)}</span></span></button><span class="voice-acts">${acts}</span></div>`;
+    }).join('');
+  }
+
+  onSpeaker() {
+    this.updateButtons();
+    if (!this.setEl.classList.contains('on') || this.view !== 'main') return;
+    const box = this.setEl.querySelector('#as-voice');
+    if (box) box.innerHTML = this.voiceRows();
+    const lab = this.setEl.querySelector('#as-voice-label');
+    if (lab) lab.textContent = this.speaker.voiceLabel();
+  }
+
+  onVoiceClick(act, id) {
+    const sp = this.speaker, name = PIPER_VOICES.find((v) => v.id === id)?.name || '';
+    if (act === 'voice') {
+      if (id && !sp.have.has(id)) { toast('Сначала скачайте голос'); return; }
+      sp.unlock(); sp.setVoice(id);
+    } else if (act === 'voice-dl') {
+      sp.download(id).then(() => { toast(`Голос ${name} скачан`); this.storageNote(); }, (err) => { console.warn(err); toast('Не удалось скачать голос'); });
+    } else if (act === 'voice-play') {
+      if (sp.speaking) sp.stop(); else sp.preview(id);
+    } else if (act === 'voice-del') {
+      if (!confirm(`Удалить голос ${name} с устройства?`)) return;
+      sp.remove(id).then(() => { toast('Голос удалён'); this.storageNote(); }, (err) => { console.warn(err); toast('Не удалось удалить голос'); });
+    }
   }
 
   asrCtl() {
@@ -646,6 +691,7 @@ export class AssistantPanel {
     }
     else if (act === 'asr-download') this.asr.ensure().then(() => toast('Распознавание речи готово'), () => toast('Не удалось скачать распознавание'));
     else if (act === 'speak-toggle') { this.speaker.unlock(); this.speaker.setEnabled(!this.speaker.enabled); b.setAttribute('aria-checked', String(this.speaker.enabled)); }
+    else if (act.startsWith('voice')) this.onVoiceClick(act, id || '');
     else if (act === 'import') this.setEl.querySelector('#as-file')?.click();
     else if (act === 'paste') { this.view = 'paste'; this.renderPaste(); }
     else if (act === 'export') this.exportDocs();

@@ -440,6 +440,12 @@ mark { background: var(--accent-soft); color: var(--accent); border-radius: 4px;
 .btn-row .btn.accent, .btn-row .btn.toggle.on { background: var(--accent); color: var(--accent-ink); }
 .btn.danger { color: #FF453A; }
 .row-eye.on { color: var(--accent); }
+.voice-acts { flex: none; display: flex; align-items: center; gap: 6px; padding-right: 12px; }
+.vbtn { height: 34px; padding: 0 12px; border-radius: 17px; display: inline-flex; align-items: center; gap: 5px; background: var(--fill); font-size: 13.5px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; transition: background .15s, transform .15s; }
+.vbtn:active { background: var(--fill-strong); transform: scale(.95); }
+.vbtn:disabled { color: var(--text-3); }
+.vbtn.danger { color: #FF453A; }
+.row-wrap .row:has(+ .voice-acts) { padding-right: 6px; }
 .dot-ic { flex: none; display: grid; place-items: center; color: var(--text-3); }
 .empty.small { padding: 22px 20px; font-size: 14.5px; }
 .doc-title { overflow-wrap: anywhere; }

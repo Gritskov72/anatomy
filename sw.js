@@ -1,5 +1,5 @@
 // Service worker: оболочка приложения в кэше, модели и данные кэшируются по мере открытия
-const VERSION = 'v2';
+const VERSION = 'v4';
 const SHELL = `atlas-shell-${VERSION}`;
 const DATA = 'atlas-data-v1';
 const MODELS = 'atlas-models-v1';
@@ -56,7 +56,8 @@ async function cacheFirst(request, cacheName, event) {
   const hit = await cache.match(request, { ignoreSearch: true });
   if (hit) return hit;
   const res = await fetch(request);
-  if (ok(res)) event.waitUntil(cache.put(request, res.clone()).catch(() => null));
+  // ответы CDN приходят с типом cors, свои файлы с типом basic
+  if (res && res.status === 200 && (res.type === 'basic' || res.type === 'cors')) event.waitUntil(cache.put(request, res.clone()).catch(() => null));
   return res;
 }
 
@@ -95,10 +96,13 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   // библиотека распознавания речи берётся с CDN и хранится в кэше для работы без сети
   if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('/@huggingface/transformers@')) { event.respondWith(cacheFirst(request, VENDOR_AI, event)); return; }
+  // Piper: среда onnxruntime-web и piper-wasm с CDN, тоже в кэш для работы без сети (модели голосов хранятся в OPFS)
+  if (url.hostname === 'cdnjs.cloudflare.com' && url.pathname.startsWith('/ajax/libs/onnxruntime-web/')) { event.respondWith(cacheFirst(request, VENDOR_AI, event)); return; }
+  if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith('/npm/@diffusionstudio/piper-wasm@')) { event.respondWith(cacheFirst(request, VENDOR_AI, event)); return; }
   if (url.origin !== self.location.origin) return;
   const path = url.pathname;
   if (path.endsWith('.glb')) event.respondWith(model(request));
-  else if (path.includes('/vendor/web-llm/') || path.includes('/vendor/transformers/')) event.respondWith(cacheFirst(request, VENDOR_AI, event));
+  else if (path.includes('/vendor/web-llm/') || path.includes('/vendor/transformers/') || path.includes('/vendor/piper/')) event.respondWith(cacheFirst(request, VENDOR_AI, event));
   else if (path.endsWith('catalog.json')) event.respondWith(networkFirst(request));
   else if (path.includes('/data/')) event.respondWith(staleWhileRevalidate(request, DATA, event));
   else event.respondWith(staleWhileRevalidate(request, SHELL, event));

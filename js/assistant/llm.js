@@ -1,7 +1,7 @@
 // Модель ответов на устройстве: web-llm в отдельном воркере. Загрузка с прогрессом, потоковый ответ, остановка, выгрузка, удаление из кэша
 import { store } from '../ui.js';
 
-export const MODEL_IDS = ['gemma-4-E2B-it-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'];
+export const MODEL_IDS = ['gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'];
 export const MODEL_NAMES = {
   'gemma-4-E2B-it-q4f16_1-MLC': 'Gemma 4 E2B',
   'gemma-2-2b-it-q4f16_1-MLC': 'Gemma 2 2B',
