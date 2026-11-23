@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Анатомия</title>
+<meta name="description" content="3D-атлас анатомии человека на русском языке">
+<meta name="theme-color" content="#0B0E13">
+<meta name="color-scheme" content="dark light">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Анатомия">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="css/app.css">
+<script>
+  try { var t = JSON.parse(localStorage.getItem('anatomy.v1') || '{}').theme; if (t === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
+</script>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="app" data-tab="atlas" data-mode="atlas">
+
+  <div id="stage"><canvas id="scene" aria-label="3D-модель"></canvas></div>
+
+  <!-- панели поверх сцены: вкладка «Атлас» -->
+  <div id="hud">
+    <div id="hud-top">
+      <div class="topbar">
+        <button class="glass round" id="btn-back" aria-label="Назад" hidden></button>
+        <button class="glass pill" id="btn-region" aria-haspopup="true"><span id="region-label">Всё тело</span><i class="ic-chev"></i></button>
+        <button class="glass pill pill-mode" id="btn-mode-exit" hidden><i class="ic-x"></i><span id="mode-label"></span></button>
+        <span class="spacer"></span>
+        <button class="glass round" id="btn-spine" aria-label="Позвоночник"></button>
+        <button class="glass round" id="btn-more" aria-label="Ещё"></button>
+      </div>
+      <div class="chips" id="system-chips" role="group" aria-label="Слои"></div>
+      <div id="loader" hidden><div class="loader-bar"><i></i></div><span id="loader-text">Загрузка</span></div>
+    </div>
+    <div id="spine-rail" hidden></div>
+    <div id="mini" hidden>
+      <div id="mini-reply" class="glass" role="status" aria-live="polite" hidden></div>
+      <button class="glass round mini-mic" id="mini-mic" aria-label="Спросить голосом"></button>
+    </div>
+  </div>
+
+  <section id="sheet" aria-hidden="true">
+    <div class="sheet-grab" id="sheet-grab">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head" id="sheet-head"></div>
+    </div>
+    <div class="sheet-controls" id="sheet-controls"></div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </section>
+
+  <section class="panel" id="panel-catalog" aria-hidden="true"></section>
+  <section class="panel" id="panel-moves" aria-hidden="true"></section>
+  <section class="panel" id="panel-search" aria-hidden="true"></section>
+  <section class="panel" id="panel-assistant" aria-hidden="true"></section>
+  <section class="panel panel-over" id="panel-about" aria-hidden="true"></section>
+  <section class="panel panel-over" id="panel-assist-settings" aria-hidden="true"></section>
+
+  <nav id="tabbar" aria-label="Разделы">
+    <button class="tab" data-tab="atlas" aria-current="page"><i></i><span>Атлас</span></button>
+    <button class="tab" data-tab="catalog"><i></i><span>Каталог</span></button>
+    <button class="tab" data-tab="moves"><i></i><span>Движения</span></button>
+    <button class="tab" data-tab="search"><i></i><span>Поиск</span></button>
+    <button class="tab" data-tab="assistant"><i></i><span>Ассистент</span></button>
+  </nav>
+
+  <div id="menu-layer" hidden><div id="menu" role="menu"></div></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <div id="boot">
+    <div class="boot-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="boot-title">Анатомия</div>
+    <div class="boot-text" id="boot-text">Загрузка атласа</div>
+    <button class="btn" id="boot-retry" hidden>Повторить</button>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
