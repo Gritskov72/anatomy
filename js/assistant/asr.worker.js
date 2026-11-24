@@ -1,9 +1,18 @@
 // Воркер распознавания речи: Whisper base через transformers.js на wasm. Модель качается при первой необходимости
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.web.min.js';
-
-env.allowLocalModels = false;
-const wasm = env.backends.onnx.wasm || (env.backends.onnx.wasm = {});
-wasm.wasmPaths = new URL('../../vendor/transformers/ort/', import.meta.url).href;
+const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js';
+let libP = null;
+// библиотека грузится по требованию: ошибка загрузки приходит текстом, а воркер остаётся жив
+function lib() {
+  if (!libP) {
+    libP = import(LIB).then((m) => {
+      m.env.allowLocalModels = false;
+      const wasm = m.env.backends.onnx.wasm || (m.env.backends.onnx.wasm = {});
+      wasm.wasmPaths = new URL('../../vendor/transformers/ort/', import.meta.url).href;
+      return m;
+    }, (err) => { libP = null; throw err; });
+  }
+  return libP;
+}
 
 const MODEL = 'onnx-community/whisper-base';
 let asr = null;
@@ -12,7 +21,7 @@ const files = new Map();
 
 function load() {
   if (!loading) {
-    loading = pipeline('automatic-speech-recognition', MODEL, {
+    loading = lib().then(({ pipeline }) => pipeline('automatic-speech-recognition', MODEL, {
       dtype: 'q8',
       device: 'wasm',
       progress_callback: (p) => {
@@ -22,7 +31,7 @@ function load() {
         for (const [a, b] of files.values()) { loaded += a; total += b; }
         self.postMessage({ type: 'progress', loaded, total });
       },
-    }).then((p) => {
+    })).then((p) => {
       asr = p;
       self.postMessage({ type: 'ready' });
       return p;

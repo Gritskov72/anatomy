@@ -137,7 +137,7 @@ export class Asr {
         reject(err);
       };
       let w;
-      try { w = this.worker = new Worker(new URL('./asr.worker.js', import.meta.url), { type: 'module' }); }
+      try { w = this.worker = new Worker(new URL('./asr.worker.js?v=4', import.meta.url), { type: 'module' }); }
       catch (err) { fail(err); return; }
       w.onmessage = (e) => {
         const m = e.data || {};
@@ -158,7 +158,7 @@ export class Asr {
           else fail(new Error(m.message || 'Модель распознавания не загрузилась'));
         }
       };
-      w.onerror = (e) => { e.preventDefault?.(); fail(new Error(e.message || 'Воркер распознавания не запустился')); };
+      w.onerror = (e) => { e.preventDefault?.(); fail(new Error(`${e.message || 'Воркер распознавания не запустился'}${e.filename ? ` · ${String(e.filename).split('/').pop()}:${e.lineno || 0}` : ''}`)); };
       w.postMessage({ type: 'load' });
     });
     return this._ready;

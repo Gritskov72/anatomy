@@ -559,7 +559,7 @@ export class AssistantPanel {
 
   asrCtl() {
     const a = this.asr;
-    const status = a.state === 'loading' ? this.asrProgress() : a.state === 'ready' ? 'Готово к работе' : a.state === 'error' ? 'Не загрузилось, попробуйте ещё раз'
+    const status = a.state === 'loading' ? this.asrProgress() : a.state === 'ready' ? 'Готово к работе' : a.state === 'error' ? `Не загрузилось: ${String(a.error?.message || a.error || 'причина неизвестна').slice(0, 160)}`
       : a.cached ? 'Скачано на устройство' : 'Скачается при первом голосовом вопросе';
     let html = `<div class="list"><div class="row static"><span class="row-main"><span class="row-title">Whisper base</span><span class="row-lat plain">${esc(status)}</span></span></div></div>`;
     if (a.state === 'loading') html += `<div class="progress"><i style="width:${Math.max(2, Math.round(a.progress * 100))}%"></i></div>`;
