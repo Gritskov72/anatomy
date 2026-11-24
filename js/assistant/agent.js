@@ -291,7 +291,7 @@ export class Agent {
       } catch (err) {
         console.warn('Модель не ответила', err);
         if (run.stopped || bot.text) return;
-        bot.hint = 'Модель сейчас недоступна, ответ собран из атласа';
+        bot.hint = `Модель не ответила, ответ собран из атласа · ${String(err?.message || err || '').replace(/\s+/g, ' ').slice(0, 140)}`;
       }
     }
     if (run.stopped) return;

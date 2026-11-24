@@ -500,6 +500,9 @@ export class AssistantPanel {
         <button class="btn small" data-act="paste">${icon('paste', 18)}<span>Вставить</span></button>
         <button class="btn small" data-act="export"${docs.length ? '' : ' disabled'}>${icon('download', 18)}<span>Экспорт</span></button></div>
       <p class="note">Файлы .md, .txt и .json, можно несколько сразу. Закреплённый документ всегда идёт в запрос к модели целиком, до 1500 знаков. Сам закрепляется документ, чьё имя начинается с 00 или содержит «кратко»</p>
+      <h2 class="sec">Приложение</h2>
+      <button class="btn wide" data-act="app-update">${icon('reset', 20)}<span>Обновить приложение</span></button>
+      <p class="note">Загружает свежую версию с сайта. Модели, голоса и ваши документы остаются на устройстве</p>
       <input type="file" id="as-file" multiple accept=".md,.markdown,.txt,.json,text/plain,text/markdown,application/json" hidden>
     </div>`;
     this.setEl.querySelector('.panel-scroll').scrollTop = sc;
@@ -704,6 +707,15 @@ export class AssistantPanel {
       try { await this.llm.remove(this.llm.crashed); toast('Файлы удалены'); } catch (err) { console.warn(err); toast('Не удалось удалить файлы'); }
       await this.refreshCached();
       this.renderMain();
+    }
+    else if (act === 'app-update') {
+      toast('Обновляю приложение');
+      try {
+        const reg = await navigator.serviceWorker?.getRegistration();
+        await reg?.update();
+        for (const k of await caches.keys()) if (/shell|data/i.test(k)) await caches.delete(k);
+      } catch (err) { console.warn(err); }
+      location.reload();
     }
     else if (act === 'unload') { await this.llm.unload(); this.renderMain(); }
     else if (act === 'remove') {
