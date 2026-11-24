@@ -472,3 +472,7 @@ mark { background: var(--accent-soft); color: var(--accent); border-radius: 4px;
 #mini-reply .msg-chips { margin-top: 8px; }
 #mini-reply .mchip { min-height: 32px; font-size: 13px; }
 #mini-reply .msg-hint { padding: 0; }
+
+/* звенья миофасциальной линии */
+.station { display: flex; align-items: center; gap: 9px; margin: 14px 0 6px; font-size: 15px; font-weight: 600; color: var(--text); }
+.station b { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--fill); color: var(--text-2); font-size: 12px; display: grid; place-items: center; }

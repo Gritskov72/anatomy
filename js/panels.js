@@ -78,7 +78,9 @@ export class CatalogPanel {
 
   render() {
     const d = this.app.data;
-    const sysChips = d.systems.map((s) => `<button class="chip${s.id === this.system ? ' on' : ''}" data-act="sys" data-id="${s.id}"><i style="--c:${esc(s.color)}"></i>${esc(s.ru)}<b>${d.count(s.id)}</b></button>`).join('');
+    let sysChips = d.systems.map((s) => `<button class="chip${s.id === this.system ? ' on' : ''}" data-act="sys" data-id="${s.id}"><i style="--c:${esc(s.color)}"></i>${esc(s.ru)}<b>${d.count(s.id)}</b></button>`).join('');
+    if (d.lines.length) sysChips += `<button class="chip${this.system === 'lines' ? ' on' : ''}" data-act="sys" data-id="lines"><i style="--c:#35d6c1"></i>Линии<b>${d.lines.length}</b></button>`;
+    if (this.system === 'lines') { this.renderLines(sysChips); return; }
     const regs = d.regions.filter((r) => d.count(this.system, r.id) > 0);
     const regChips = `<button class="chip plain${!this.region ? ' on' : ''}" data-act="reg" data-id="">Все области</button>`
       + regs.map((r) => `<button class="chip plain${r.id === this.region ? ' on' : ''}" data-act="reg" data-id="${r.id}">${esc(r.ru)}<b>${d.count(this.system, r.id)}</b></button>`).join('');
@@ -108,6 +110,20 @@ export class CatalogPanel {
     </div>`;
   }
 
+  renderLines(sysChips) {
+    const d = this.app.data;
+    const rows = d.lines.map((l) => { const v = l.variants[0]; return `<button class="row row-item" data-act="line" data-id="${esc(l.id)}" style="--d:0">
+      <i class="dot sq" style="--c:#35d6c1"></i><span class="row-main"><span class="row-title">${esc(l.ru)}</span>
+      <span class="row-lat plain">${v.stations.length} ${v.stations.length % 10 >= 2 && v.stations.length % 10 <= 4 && (v.stations.length < 12 || v.stations.length > 14) ? 'звена' : 'звеньев'} · структур ${v.ids.length}</span></span>${icon('chevR', 18)}</button>`; }).join('');
+    this.el.innerHTML = `<div class="panel-scroll">
+      <header class="panel-head"><h1>Каталог</h1></header>
+      <div class="chips chips-panel">${sysChips}</div>
+      <div class="crumbs"><span>Миофасциальные линии</span><em>${d.lines.length}</em></div>
+      <div class="list">${rows}</div>
+      <p class="note">Линии связывают мышцы и фасции в непрерывные цепи от стопы до головы. Нажмите на линию, чтобы увидеть её на модели</p>
+    </div>`;
+  }
+
   level(region, parentId, depth) {
     const d = this.app.data;
     const { groups, items } = d.children(this.system, region, parentId);
@@ -132,7 +148,8 @@ export class CatalogPanel {
   onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const { act, id } = b.dataset;
-    if (act === 'sys') { this.system = id; this.region = this.app.data.count(id, this.region) ? this.region : null; this.keepScroll(() => this.render(), true); }
+    if (act === 'line') this.app.openLine(id);
+    else if (act === 'sys') { this.system = id; this.region = id !== 'lines' && this.app.data.count(id, this.region) ? this.region : null; this.keepScroll(() => this.render(), true); }
     else if (act === 'reg') { this.region = id || null; this.keepScroll(() => this.render(), true); }
     else if (act === 'toggle') { const k = b.dataset.key; if (this.toggled.has(k)) this.toggled.delete(k); else this.toggled.add(k); this.keepScroll(() => this.render()); }
     else if (act === 'item') this.app.openItem(id);
@@ -204,6 +221,8 @@ export class SearchPanel {
     }
     this.out.innerHTML = `<div class="list">${rows.map((e) => {
       if (e.kind === 'items') return itemRows(this.app, e.items, { hl: tokens });
+      if (e.kind === 'line') return `<button class="row row-item" data-act="line" data-id="${esc(e.ref.id)}" style="--d:0"><i class="dot sq" style="--c:#35d6c1"></i>
+          <span class="row-main"><span class="row-title">${mark(e.ref.ru, tokens)}</span><span class="row-lat plain">Миофасциальная линия</span></span>${icon('chevR', 18)}</button>`;
       if (e.kind === 'group') {
         const g = e.ref;
         return `<button class="row row-item" data-act="group" data-id="${esc(g.id)}" style="--d:0"><i class="dot sq" style="--c:${esc(d.systemById.get(g.system)?.color || '#999')}"></i>
@@ -218,6 +237,7 @@ export class SearchPanel {
     const { act, id } = b.dataset;
     if (act === 'item') { this.input.blur(); this.app.openItem(id); }
     else if (act === 'group') { this.input.blur(); this.app.openGroup(id); }
+    else if (act === 'line') { this.input.blur(); this.app.openLine(id); }
     else if (act === 'clear') { this.q = this.input.value = ''; this.results(); this.input.focus(); }
     else if (act === 'clear-recents') { store.set('recents', []); this.results(); }
   }

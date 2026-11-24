@@ -162,6 +162,19 @@ const tidy = (t) => String(t || '').replace(/[—–]/g, '-');
 const tidyModel = (t) => tidy(t).replace(DISCLAIM, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+/, '');
 
 const hitChip = (data, h) => ({ kind: h.kind, id: h.id, ids: h.ids, label: h.ru, sub: h.kind === 'group' ? 'группа' : '', color: data.systemById.get(h.system)?.color || '' });
+/** Миофасциальная линия по словам запроса: совпадение по началам слов названия. */
+function findLine(data, text) {
+  const cut = (s) => (String(s).toLowerCase().replace(/ё/g, 'е').match(/[а-я]+/g) || []).filter((w) => !/^(лини|миофасц|меридиан|покаж|откро)/.test(w)).map((w) => w.slice(0, 5));
+  const q = cut(text);
+  let best = null, top = 0;
+  for (const l of data.lines || []) {
+    const name = cut(l.ru);
+    const hits = name.filter((w) => q.includes(w)).length;
+    const score = hits === name.length ? 10 + hits : hits;
+    if (score > top) { top = score; best = l; }
+  }
+  return best;
+}
 const moveChip = (mv) => ({ kind: 'move', id: mv.id, ids: [], label: mv.ru, sub: 'движение', color: '' });
 const itemChip = (data, id) => { const it = data.itemById.get(id); return it ? { kind: 'item', id, ids: [id], label: it.ru, sub: it.side ? SIDE_SHORT[it.side] : '', color: data.systemById.get(it.system)?.color || '' } : null; };
 function uniqChips(list) {
@@ -336,6 +349,11 @@ export class Agent {
     }
 
     const target = cmd.target || '';
+    const line = cmd.type !== 'hide' && /лини|меридиан/i.test(target) ? findLine(data, target) : null;
+    if (line) {
+      app.openLine(line.id);
+      return { done: true, text: `${line.ru}. Показал в атласе${line.summary ? `\n${firstSentence(line.summary)}` : ''}`, chips: [{ kind: 'line', id: line.id, ids: [], label: line.ru, sub: 'линия', color: '#35d6c1' }] };
+    }
     const vt = vertebra(target, data);
     const hit = vt ? S.hitFor(vt.id) : S.resolve(noSide(target));
     if (!hit) return { shown: null };
@@ -392,6 +410,7 @@ export class Agent {
   openChip(chip) {
     const app = this.app;
     if (chip.kind === 'move') { if (app.data.movementById.has(chip.id)) { app.openMovement(chip.id); app.startPlay(); } return; }
+    if (chip.kind === 'line') { app.openLine(chip.id); return; }
     if (chip.kind === 'group') { app.openGroup(chip.id); return; }
     const ids = (chip.ids?.length ? chip.ids : [chip.id]).filter((id) => app.item(id));
     if (ids.length) this.showIds(ids);

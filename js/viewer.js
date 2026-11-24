@@ -70,7 +70,7 @@ export class Viewer {
     const faded = (o) => new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, transparent: true, opacity: 0.16, depthWrite: true, side: THREE.FrontSide, ...o });
     const m = this.mat = { sys: new Map(), sysFaded: new Map() };
     for (const s of this.data.systems) {
-      m.sys.set(s.id, std({ color: s.color, roughness: s.id === 'bones' ? 0.72 : 0.55 }));
+      m.sys.set(s.id, std({ color: s.color, roughness: s.id === 'bones' ? 0.72 : 0.55, ...(s.id === 'fascia' ? { transparent: true, opacity: 0.5 } : {}) }));
       m.sysFaded.set(s.id, faded({ color: s.color }));
     }
     m.vc = std({ color: 0xffffff, vertexColors: true });

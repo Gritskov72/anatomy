@@ -5,8 +5,8 @@ const SOURCES = [
   { name: 'mock', catalog: 'data/mock/catalog.json', textBase: 'data/mock/text/', modelBase: 'data/mock/' },
 ];
 
-export const SYSTEM_ORDER = ['bones', 'joints', 'muscles', 'nerves', 'vessels', 'organs'];
-const FALLBACK_COLORS = { bones: '#E8DCC8', joints: '#9FC4D6', muscles: '#B5483F', nerves: '#F0CB4A', vessels: '#D43A3A', organs: '#C98383' };
+export const SYSTEM_ORDER = ['bones', 'joints', 'muscles', 'fascia', 'nerves', 'vessels', 'organs'];
+const FALLBACK_COLORS = { bones: '#E8DCC8', joints: '#9FC4D6', muscles: '#B5483F', fascia: '#9CC3CF', nerves: '#F0CB4A', vessels: '#D43A3A', organs: '#C98383' };
 
 export const norm = (s) => (s || '').toString().toLowerCase().replace(/ё/g, 'е').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -23,6 +23,8 @@ export async function loadDataset() {
       if (!res.ok) continue;
       const raw = await res.json();
       if (!raw || !Array.isArray(raw.items) || !raw.items.length || !Array.isArray(raw.models)) continue;
+      // миофасциальные линии лежат отдельным файлом: без него атлас работает как прежде
+      try { const lr = await fetch(src.catalog.replace('catalog.json', 'lines.json'), { cache: 'no-cache' }); if (lr.ok) raw.lines = (await lr.json()).lines; } catch (e) { /* линий нет */ }
       return new Dataset(raw, src);
     } catch (e) { /* пробуем следующий источник */ }
   }
@@ -90,6 +92,14 @@ export class Dataset {
     this.counts = new Map();
     for (const item of this.items) for (const key of [`${item.system}|${item.region}`, `${item.system}|*`]) this.counts.set(key, (this.counts.get(key) || 0) + 1);
 
+    this.lines = (Array.isArray(raw.lines) ? raw.lines : []).map((l) => ({
+      ...l,
+      variants: (l.variants || []).map((v) => {
+        const stations = (v.stations || []).map((st) => ({ ru: st.ru, ids: (st.ids || []).filter((id) => this.itemById.has(id)) }));
+        return { side: v.side || null, stations, ids: [...new Set(stations.flatMap((st) => st.ids))] };
+      }),
+    })).filter((l) => l.variants.length);
+    this.lineById = new Map(this.lines.map((l) => [l.id, l]));
     this._buildSearch();
     this._buildSpine();
     this._buildMovements(raw.movements || []);
@@ -137,6 +147,7 @@ export class Dataset {
     this.searchIndex = [];
     for (const it of this.items) this.searchIndex.push({ kind: 'item', ref: it, ru: norm(it.ru), alt: norm(it.ruAlt), lat: norm(it.lat), en: norm(it.en) });
     for (const g of this.groups) if (g.total) this.searchIndex.push({ kind: 'group', ref: g, ru: norm(g.ru), lat: norm(g.lat), en: norm(g.en) });
+    for (const l of this.lines) this.searchIndex.push({ kind: 'line', ref: l, ru: norm(l.ru), alt: norm('миофасциальная линия меридиан'), en: norm(l.en) });
   }
 
   search(query, limit = 60) {
@@ -158,6 +169,7 @@ export class Dataset {
       }
       if (!ok) continue;
       if (e.kind === 'group') score += 1;
+      if (e.kind === 'line') score += 2;
       score -= Math.min(e.ru.length, 80) / 100;
       out.push({ e, score });
     }

@@ -14,7 +14,7 @@ const FIELDS = [
 ];
 const VIEWS = [['front', 'Спереди'], ['back', 'Сзади'], ['left', 'Слева'], ['right', 'Справа'], ['top', 'Сверху'], ['bottom', 'Снизу']];
 const HISTORY_MAX = 60;
-const CHIP_NAMES = { bones: 'Кости', joints: 'Суставы', muscles: 'Мышцы', nerves: 'Нервы', vessels: 'Сосуды', organs: 'Органы' };
+const CHIP_NAMES = { bones: 'Кости', joints: 'Суставы', muscles: 'Мышцы', fascia: 'Фасции', nerves: 'Нервы', vessels: 'Сосуды', organs: 'Органы' };
 
 class App {
   constructor(data) {
@@ -24,7 +24,7 @@ class App {
     this.s = {
       systems: new Set(saved.length ? saved : [first]), region: null,
       hidden: new Set(), pinned: new Set(), isolated: null, isoLabel: '', isoGroup: null, fade: false, selected: null,
-      mode: 'atlas', spineId: null, spineContext: false, moveId: null, moveSide: 0, angle: 0,
+      mode: 'atlas', lineId: null, lineSide: 0, spineId: null, spineContext: false, moveId: null, moveSide: 0, angle: 0,
     };
     this.history = []; this.tab = 'atlas'; this.sheetKey = null; this.playing = false; this.modeReturn = null;
   }
@@ -88,6 +88,10 @@ class App {
       if (r.mv.has(id)) return item.system === 'bones' ? 'normal' : 'faded';
       return item.system === 'bones' && !item.defaultHidden && s.systems.has('bones') ? 'normal' : null;
     }
+    if (s.lineId && s.isolated) {
+      if (s.isolated.has(id)) return id === s.selected ? 'selected' : 'normal';
+      return item.system === 'bones' && !item.defaultHidden ? 'faded' : null;
+    }
     if (s.hidden.has(id)) return null;
     if (s.isolated) return s.isolated.has(id) ? (id === s.selected && s.isolated.size > 1 ? 'selected' : 'normal') : null;
     if (!this.baseVisible(item)) return null;
@@ -126,7 +130,7 @@ class App {
   // ---------- синхронизация вида ----------
   sync() {
     const s = this.s, d = this.data;
-    if (!s.isolated) { s.isoGroup = null; s.isoLabel = ''; }
+    if (!s.isolated) { s.isoGroup = null; s.isoLabel = ''; s.lineId = null; }
     const mv = s.mode === 'move' ? this.currentMove() : null;
     this.moveRoles = mv ? { ag: new Set(mv.agonists), an: new Set(mv.antagonists), mv: new Set(mv.moving) } : null;
     this.viewer.apply(this.roleOf);
@@ -183,7 +187,7 @@ class App {
     const item = this.item(id); if (!item) return;
     this.act((s) => {
       s.selected = id; s.hidden.delete(id);
-      if (s.isolated && !s.isolated.has(id)) s.isolated = null;
+      if (s.isolated && !s.isolated.has(id)) { s.isolated = null; s.lineId = null; }
       if (!this.baseVisible(item)) s.pinned.add(id);
     });
     this.pushRecent(id);
@@ -202,10 +206,10 @@ class App {
 
   isolate() {
     const s = this.s;
-    if (s.isolated) { this.act((x) => { x.isolated = null; x.isoLabel = ''; }); this.viewer.fitVisible(); return; }
+    if (s.isolated) { this.act((x) => { x.isolated = null; x.isoLabel = ''; x.lineId = null; }); this.viewer.fitVisible(); return; }
     if (!s.selected) return;
     const id = s.selected;
-    this.act((x) => { x.isolated = new Set([id]); x.isoLabel = ''; x.isoGroup = null; x.fade = false; });
+    this.act((x) => { x.isolated = new Set([id]); x.isoLabel = ''; x.isoGroup = null; x.lineId = null; x.fade = false; });
     this.viewer.focus([id]);
   }
 
@@ -231,7 +235,7 @@ class App {
     this.stopPlay();
     this.act((s) => {
       s.mode = 'atlas'; s.selected = id; s.hidden.delete(id);
-      if (s.isolated && !s.isolated.has(id)) s.isolated = null;
+      if (s.isolated && !s.isolated.has(id)) { s.isolated = null; s.lineId = null; }
       if (!this.baseVisible(item)) s.pinned.add(id);
     });
     this.pushRecent(id);
@@ -245,8 +249,18 @@ class App {
     if (!items.length) return;
     this.setTab('atlas'); this.stopPlay();
     const ids = items.map((it) => it.id);
-    this.act((s) => { s.mode = 'atlas'; s.isolated = new Set(ids); s.isoLabel = g.ru; s.isoGroup = id; s.selected = null; s.fade = false; for (const i of ids) s.hidden.delete(i); });
+    this.act((s) => { s.mode = 'atlas'; s.isolated = new Set(ids); s.isoLabel = g.ru; s.isoGroup = id; s.lineId = null; s.selected = null; s.fade = false; for (const i of ids) s.hidden.delete(i); });
     this.viewer.focus(ids);
+  }
+
+  /** Миофасциальная линия: её структуры в цвете, скелет полупрозрачным фоном. */
+  openLine(id, sideIndex = 0) {
+    const line = this.data.lineById.get(id); if (!line) return;
+    const v = line.variants[sideIndex] || line.variants[0];
+    if (!v.ids.length) return;
+    this.setTab('atlas'); this.stopPlay();
+    this.act((s) => { s.mode = 'atlas'; s.isolated = new Set(v.ids); s.isoLabel = line.ru; s.isoGroup = null; s.lineId = id; s.lineSide = line.variants.indexOf(v); s.selected = null; s.fade = false; for (const i of v.ids) s.hidden.delete(i); });
+    this.viewer.focus(v.ids, { dir: /задн|спирал/i.test(line.ru) ? [-0.5, 0.1, -1] : /латерал/i.test(line.ru) ? [1, 0.1, 0.25] : [0.42, 0.1, 1] });
   }
 
   openRegion(system, region) {
@@ -361,7 +375,7 @@ class App {
   exitMode() {
     const s = this.s;
     this.stopPlay();
-    if (s.mode === 'atlas') { if (s.isolated) { this.act((x) => { x.isolated = null; x.isoLabel = ''; }); this.viewer.fitVisible(); } return; }
+    if (s.mode === 'atlas') { if (s.isolated) { this.act((x) => { x.isolated = null; x.isoLabel = ''; x.lineId = null; }); this.viewer.fitVisible(); } return; }
     const ret = this.modeReturn; this.modeReturn = null;
     this.act(() => {
       if (ret) this.restore(ret); else { this.s.mode = 'atlas'; this.s.selected = null; }
@@ -393,12 +407,12 @@ class App {
 
   renderSheet() {
     const s = this.s, d0 = this.data;
-    const key = s.mode === 'move' ? `move:${s.moveId}:${s.moveSide}` : s.mode === 'spine' ? `spine:${s.spineId}` : s.selected ? `item:${s.selected}` : s.isolated && s.isoGroup ? `group:${s.isoGroup}` : null;
+    const key = s.mode === 'move' ? `move:${s.moveId}:${s.moveSide}` : s.mode === 'spine' ? `spine:${s.spineId}` : s.selected ? `item:${s.selected}` : s.isolated && s.lineId ? `line:${s.lineId}:${s.lineSide}` : s.isolated && s.isoGroup ? `group:${s.isoGroup}` : null;
     if (!key) { this.sheetKey = null; this.sheet.hide(); return; }
     if (key !== this.sheetKey) {
       const wasOpen = this.sheet.open, sameKind = this.sheetKey?.split(':')[0] === key.split(':')[0];
       this.sheetKey = key;
-      if (s.mode === 'move') this.buildMoveSheet(); else if (key.startsWith('group:')) this.buildGroupSheet(d0.groupById.get(s.isoGroup), key); else this.buildItemSheet(this.item(s.mode === 'spine' ? s.spineId : s.selected), key);
+      if (s.mode === 'move') this.buildMoveSheet(); else if (key.startsWith('line:')) this.buildLineSheet(d0.lineById.get(s.lineId)); else if (key.startsWith('group:')) this.buildGroupSheet(d0.groupById.get(s.isoGroup), key); else this.buildItemSheet(this.item(s.mode === 'spine' ? s.spineId : s.selected), key);
       this.sheet.body.scrollTop = 0;
       this.sheet.show(wasOpen && sameKind ? this.sheet.detent : 'peek');
       this.sheet.refresh();
@@ -500,6 +514,25 @@ class App {
       if (t?.clinical) html += `<section class="fld clinical"><h3>Клиническое значение</h3><p>${esc(t.clinical)}</p></section>`;
       this.sheet.body.innerHTML = html + list;
     });
+  }
+
+  buildLineSheet(line) {
+    const d = this.data, v = line.variants[this.s.lineSide] || line.variants[0];
+    this.sheet.head.innerHTML = `<div class="sheet-title"><h2>${esc(line.ru)}</h2><p class="lat plain">Миофасциальная линия · ${esc(line.en || '')}</p></div>
+      <div class="sheet-btns"><button class="icon-btn" data-act="close" aria-label="Закрыть">${icon('x', 20)}</button></div>`;
+    this.sheet.controls.innerHTML = `${line.variants.length > 1 ? `<div class="seg seg-side" role="group" aria-label="Сторона">${line.variants.map((x, i) => `<button data-act="line-side" data-id="${i}" class="${x === v ? 'on' : ''}">${x.side === 'L' ? 'От левой стороны' : 'От правой стороны'}</button>`).join('')}</div>` : ''}
+      <div class="spine-ctl two"><button class="btn" data-act="close">${icon('eye', 20)}<span>Показать всё</span></button><button class="btn" data-act="back">${icon('back', 20)}<span>Назад</span></button></div>`;
+    let html = '';
+    if (line.summary) html += `<p class="lead">${esc(line.summary)}</p>`;
+    if (line.action) html += `<section class="fld"><h3>Функция</h3><p>${esc(line.action)}</p></section>`;
+    if (line.clinical) html += `<section class="fld clinical"><h3>Практическое значение</h3><p>${esc(line.clinical)}</p></section>`;
+    html += '<section class="fld"><h3>Звенья линии по порядку</h3>';
+    v.stations.forEach((st, i) => {
+      const items = st.ids.map((id) => d.itemById.get(id)).filter(Boolean);
+      html += `<h4 class="station"><b>${i + 1}</b>${esc(st.ru)}</h4>${items.length ? `<div class="list inset">${itemRows(this, items)}</div>` : '<p class="note">Этого звена нет в трёхмерной модели</p>'}`;
+    });
+    html += '</section><p class="note">Состав линий дан по схеме миофасциальных меридианов Томаса Майерса</p>';
+    this.sheet.body.innerHTML = html;
   }
 
   buildMoveSheet() {
@@ -604,6 +637,7 @@ class App {
       else if (act === 'spine-context') { s.spineContext = !s.spineContext; this.sync(); }
       else if (act === 'view') this.viewer.setView(id);
       else if (act === 'play') this.togglePlay();
+      else if (act === 'line-side') this.openLine(s.lineId, +id);
       else if (act === 'move-side') { this.stopPlay(); s.moveSide = +id; s.angle = this.currentMove().range[0]; this.sync(); this.focusMove(this.currentMove()); }
     });
     sheet.addEventListener('input', (e) => { if (e.target.id === 'mv-range') { this.stopPlay(); this.setAngle(+e.target.value); } });
