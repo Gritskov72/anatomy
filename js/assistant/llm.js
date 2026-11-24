@@ -2,12 +2,20 @@
 import { store } from '../ui.js';
 
 // порядок от лёгкой к тяжёлой: первая в списке ставится по умолчанию и помещается в память телефона
+export const IS_IOS = typeof navigator !== 'undefined'
+  && (/iPhone|iPad|iPod/i.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 export const MODEL_IDS = ['gemma3-1b-it-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC'];
 export const MODEL_NAMES = {
   'gemma3-1b-it-q4f16_1-MLC': 'Gemma 3 1B',
   'gemma-4-E2B-it-q4f16_1-MLC': 'Gemma 4 E2B',
   'gemma-2-2b-it-q4f16_1-MLC': 'Gemma 2 2B',
   'Qwen2.5-1.5B-Instruct-q4f16_1-MLC': 'Qwen 2.5 1.5B',
+};
+export const MODEL_MB = {
+  'gemma3-1b-it-q4f16_1-MLC': 711,
+  'Qwen2.5-1.5B-Instruct-q4f16_1-MLC': 1630,
+  'gemma-2-2b-it-q4f16_1-MLC': 1895,
+  'gemma-4-E2B-it-q4f16_1-MLC': 3387,
 };
 
 /** Грубая оценка: 1 токен на 3 знака русского текста. */
@@ -24,6 +32,7 @@ const lib = () => {
 export class Llm {
   constructor() {
     this.supported = typeof navigator !== 'undefined' && !!navigator.gpu;
+    this.enabled = store.get('assist.llmOn', !IS_IOS);
     const saved = store.get('assist.model', MODEL_IDS[0]);
     this.modelId = MODEL_IDS.includes(saved) ? saved : MODEL_IDS[0];
     // метка ставится перед загрузкой и снимается после неё: если она осталась, страница в прошлый раз закрылась посреди загрузки
@@ -47,25 +56,33 @@ export class Llm {
 
   get ready() { return this.state === 'ready' && !!this.engine && this.loadedId === this.modelId; }
 
-  /** Список моделей с размером из prebuiltAppConfig. */
+  /** Список моделей и их размер. */
   async models() {
-    const { prebuiltAppConfig } = await lib();
-    const list = prebuiltAppConfig?.model_list || [];
-    return MODEL_IDS.map((id) => {
-      const rec = list.find((m) => m.model_id === id);
-      return { id, name: MODEL_NAMES[id] || id, mb: rec?.vram_required_MB || 0, available: !!rec };
-    });
+    return MODEL_IDS.map((id) => ({ id, name: MODEL_NAMES[id] || id, mb: MODEL_MB[id] || 0, available: true }));
   }
 
   async isCached(id = this.modelId) {
     if (!this.supported) return false;
     if (this.cache.has(id)) return this.cache.get(id);
+    let timer;
     try {
-      const { hasModelInCache } = await lib();
-      const v = !!(await hasModelInCache(id));
+      const check = (async () => {
+        const { hasModelInCache } = await lib();
+        return !!(await hasModelInCache(id));
+      })();
+      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 4000); });
+      const v = await Promise.race([check, timeout]);
+      if (v === null) { check.catch(() => {}); return false; }
       this.cache.set(id, v);
       return v;
-    } catch (e) { return false; }
+    } catch (e) { return false; } finally { clearTimeout(timer); }
+  }
+
+  setEnabled(on) {
+    this.enabled = !!on;
+    store.set('assist.llmOn', this.enabled);
+    if (!this.enabled) this.unload();
+    this.emit();
   }
 
   setModel(id) {
@@ -118,7 +135,7 @@ export class Llm {
   }
 
   markFailed(on) { this.failedId = on ? this.modelId : null; store.set('assist.llmFail', this.failedId); this.emit(); }
-  get usable() { return this.supported && this.failedId !== this.modelId; }
+  get usable() { return this.supported && this.enabled && this.failedId !== this.modelId; }
 
   /** Потоковый ответ. onDelta(кусок, весь текст). */
   async chat(messages, { onDelta, maxTokens = 480 } = {}) {

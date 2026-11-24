@@ -1,7 +1,7 @@
 // Экран «Ассистент»: чат, голос, настройки и мини-ассистент поверх сцены на вкладке «Атлас»
 import { $, esc, toast, md } from '../ui.js';
 import { icon } from '../icons.js';
-import { Llm, MODEL_IDS, MODEL_NAMES, fmtGB } from './llm.js';
+import { Llm, MODEL_IDS, MODEL_NAMES, MODEL_MB, IS_IOS, fmtGB } from './llm.js';
 import { AtlasSearch } from './search.js';
 import { Profile } from './profile.js';
 import { Recorder, Asr, Speaker, PIPER_VOICES, PIPER_MB } from './voice.js';
@@ -54,13 +54,13 @@ export class AssistantPanel {
     const asrEnsure = this.asr.ensure.bind(this.asr);
     this.asr.ensure = () => {
       if (this.asr._ready) return asrEnsure();
-      if (!this._asrSeq) {
-        this._asrSeq = (async () => {
-          const had = this.llm.ready || this.llm.state === 'loading';
-          if (had) { try { await this.llm._loading; } catch (e) { /* загрузка модели сорвалась */ } await this.llm.unload(); }
-          try { await asrEnsure(); } finally { this._asrSeq = null; if (had) this.llm.load().catch(() => {}); }
-        })();
-      }
+      if (this._asrSeq) return this._asrSeq;
+      if (!(this.llm.usable && (this.llm.ready || this.llm.state === 'loading'))) return asrEnsure();
+      this._asrSeq = (async () => {
+        try { await this.llm._loading; } catch (e) { /* загрузка модели сорвалась */ }
+        await this.llm.unload();
+        try { await asrEnsure(); } finally { this._asrSeq = null; if (this.llm.usable) this.llm.load().catch(() => {}); }
+      })();
       return this._asrSeq;
     };
     this.rec = new Recorder();
@@ -136,11 +136,13 @@ export class AssistantPanel {
     this.updateStatus(); this.updateButtons(); this.updateNote();
     if (!this.log.firstElementChild) this.renderLog();
     requestAnimationFrame(() => this.scrollEnd());
-    this.refreshCached().then(() => {
+    const first = this.asr.cached && this.asr.state === 'idle' ? this.asr.ensure().catch(() => {}) : Promise.resolve();
+    if (!this.llm.usable) return;
+    Promise.all([first, this.refreshCached()]).then(() => {
       // скачанная модель прогревается заранее, чтобы первый ответ шёл без ожидания
-      if (!(this.llm.usable && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle')) return;
-      const first = this.asr.cached && this.asr.state !== 'ready' ? this.asr.ensure().catch(() => {}) : Promise.resolve();
-      first.then(() => { if (this.llm.state === 'idle') this.llm.load().catch(() => {}); });
+      if (this.llm.usable && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle') {
+        this.llm.load().catch(() => {});
+      }
     });
   }
 
@@ -155,7 +157,7 @@ export class AssistantPanel {
     if (!el) return;
     const l = this.llm, name = MODEL_NAMES[l.modelId] || l.modelId;
     let t = 'Ответы из атласа и ваших данных', on = false;
-    if (l.supported) {
+    if (l.usable) {
       if (l.state === 'loading') t = `Загрузка модели ${Math.round(l.progress * 100)}%`;
       else if (l.ready) { t = `${name} · работает на устройстве`; on = true; }
       else if (this.cached.get(l.modelId)) t = `${name} · скачана`;
@@ -460,33 +462,28 @@ export class AssistantPanel {
 
   async renderMain() {
     const llm = this.llm;
-    // пока грузится список моделей, показываем заголовок с кнопкой закрытия
-    if (!this.setEl.querySelector('.panel-scroll')) this.setEl.innerHTML = `<div class="panel-scroll"><header class="panel-head with-close"><button class="glass round" data-act="close" aria-label="Закрыть">${icon('x', 20)}</button><h1>Ассистент</h1><p>Загрузка настроек</p></header></div>`;
     await this.profile.init();
-    if (llm.supported && !this.models) {
-      try {
-        this.models = await llm.models();
-        const cur = this.models.find((m) => m.id === llm.modelId);
-        if (cur && !cur.available) { const ok = this.models.find((m) => m.available); if (ok) llm.setModel(ok.id); }
-      } catch (err) { console.warn('Список моделей недоступен', err); }
-    }
-    if (llm.supported) await this.refreshCached();
     if (this.speaker.have.size) this.speaker.syncPiper();
     if (this.view !== 'main' || !this.setEl.classList.contains('on')) return;
-    const models = this.models || MODEL_IDS.map((id) => ({ id, name: MODEL_NAMES[id], mb: 0, available: true }));
+    this.models = MODEL_IDS.map((id) => ({ id, name: MODEL_NAMES[id] || id, mb: MODEL_MB[id] || 0, available: true }));
     const docs = this.profile.list();
     const sc = this.setEl.querySelector('.panel-scroll')?.scrollTop || 0;
+    const llmSub = IS_IOS
+      ? 'На iPhone модель может не запуститься. Без неё ассистент отвечает по атласу и вашим документам'
+      : 'Модель работает на этом устройстве';
     this.setEl.innerHTML = `<div class="panel-scroll">
       <header class="panel-head with-close"><button class="glass round" data-act="close" aria-label="Закрыть">${icon('x', 20)}</button><h1>Ассистент</h1>
         <p>Модель, распознавание речи и ваши данные хранятся только на этом устройстве</p></header>
       <h2 class="sec">Модель ответов</h2>
+      <div class="list"><button class="row" data-act="llm-toggle" role="switch" aria-checked="${llm.enabled}">
+        <span class="row-main"><span class="row-title">Отвечать с помощью модели</span><span class="row-lat plain">${llmSub}</span></span><span class="switch"></span></button></div>
       ${llm.supported ? '' : '<p class="note">В этом браузере нет WebGPU. Ассистент отвечает по атласу и вашим документам без модели</p>'}
-      <div class="list">${models.map((m) => this.modelRow(m)).join('')}</div>
+      ${llm.enabled ? `<div class="list" id="as-models">${this.models.map((m) => this.modelRow(m)).join('')}</div>
       ${llm.crashed ? `<p class="note">Загрузка модели ${esc(MODEL_NAMES[llm.crashed] || '')} прервалась: телефону не хватило памяти. Для iPhone подходит Gemma 3 1B</p>
         <button class="btn small" data-act="purge">${icon('trash', 18)}<span>Удалить недокачанные файлы</span></button>` : ''}
       ${llm.failedId === llm.modelId ? '<p class="note">Эта модель загрузилась, но не смогла ответить на этом устройстве. Ассистент отвечает по атласу и вашим документам. Кнопка ниже запускает модель ещё раз</p>' : ''}
       <p class="note">Перед загрузкой закройте другие приложения. Модели тяжелее 1 ГБ на телефоне могут закрыть страницу</p>
-      <div class="as-ctl" id="as-model">${this.modelCtl()}</div>
+      <div class="as-ctl" id="as-model">${this.modelCtl()}</div>` : ''}
       <p class="note" id="as-storage"></p>
       <h2 class="sec">Распознавание речи</h2>
       <div class="as-ctl" id="as-asr">${this.asrCtl()}</div>
@@ -510,6 +507,13 @@ export class AssistantPanel {
     </div>`;
     this.setEl.querySelector('.panel-scroll').scrollTop = sc;
     this.storageNote();
+    if (llm.enabled && llm.supported) this.refreshCached().then(() => {
+      if (this.view !== 'main' || !this.setEl.classList.contains('on')) return;
+      const list = this.setEl.querySelector('#as-models');
+      if (list) list.innerHTML = this.models.map((m) => this.modelRow(m)).join('');
+      const ctl = this.setEl.querySelector('#as-model');
+      if (ctl) ctl.innerHTML = this.modelCtl();
+    });
   }
 
   modelRow(m) {
@@ -649,7 +653,7 @@ export class AssistantPanel {
   }
 
   async loadModel() {
-    if (!this.llm.supported) return;
+    if (!this.llm.enabled || !this.llm.supported) return;
     this.llm.markFailed(false);
     try {
       await this.llm.load();
@@ -705,6 +709,7 @@ export class AssistantPanel {
     const { act, id } = b.dataset;
     if (act === 'close') this.closeSettings();
     else if (act === 'back-main') { this.view = 'main'; this.renderMain(); }
+    else if (act === 'llm-toggle') { this.llm.setEnabled(!this.llm.enabled); this.renderMain(); }
     else if (act === 'model') { this.llm.setModel(id); this.renderMain(); }
     else if (act === 'download' || act === 'load') this.loadModel();
     else if (act === 'purge') {

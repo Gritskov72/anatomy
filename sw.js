@@ -1,5 +1,5 @@
 // Service worker: оболочка приложения в кэше, модели и данные кэшируются по мере открытия
-const VERSION = 'v10';
+const VERSION = 'v11';
 const SHELL = `atlas-shell-${VERSION}`;
 const DATA = 'atlas-data-v1';
 const MODELS = 'atlas-models-v1';
