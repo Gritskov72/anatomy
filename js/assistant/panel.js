@@ -138,7 +138,7 @@ export class AssistantPanel {
     requestAnimationFrame(() => this.scrollEnd());
     this.refreshCached().then(() => {
       // скачанная модель прогревается заранее, чтобы первый ответ шёл без ожидания
-      if (!(this.llm.supported && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle')) return;
+      if (!(this.llm.usable && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle')) return;
       const first = this.asr.cached && this.asr.state !== 'ready' ? this.asr.ensure().catch(() => {}) : Promise.resolve();
       first.then(() => { if (this.llm.state === 'idle') this.llm.load().catch(() => {}); });
     });
@@ -460,6 +460,8 @@ export class AssistantPanel {
 
   async renderMain() {
     const llm = this.llm;
+    // пока грузится список моделей, показываем заголовок с кнопкой закрытия
+    if (!this.setEl.querySelector('.panel-scroll')) this.setEl.innerHTML = `<div class="panel-scroll"><header class="panel-head with-close"><button class="glass round" data-act="close" aria-label="Закрыть">${icon('x', 20)}</button><h1>Ассистент</h1><p>Загрузка настроек</p></header></div>`;
     await this.profile.init();
     if (llm.supported && !this.models) {
       try {
@@ -482,6 +484,7 @@ export class AssistantPanel {
       <div class="list">${models.map((m) => this.modelRow(m)).join('')}</div>
       ${llm.crashed ? `<p class="note">Загрузка модели ${esc(MODEL_NAMES[llm.crashed] || '')} прервалась: телефону не хватило памяти. Для iPhone подходит Gemma 3 1B</p>
         <button class="btn small" data-act="purge">${icon('trash', 18)}<span>Удалить недокачанные файлы</span></button>` : ''}
+      ${llm.failedId === llm.modelId ? '<p class="note">Эта модель загрузилась, но не смогла ответить на этом устройстве. Ассистент отвечает по атласу и вашим документам. Кнопка ниже запускает модель ещё раз</p>' : ''}
       <p class="note">Перед загрузкой закройте другие приложения. Модели тяжелее 1 ГБ на телефоне могут закрыть страницу</p>
       <div class="as-ctl" id="as-model">${this.modelCtl()}</div>
       <p class="note" id="as-storage"></p>
@@ -647,6 +650,7 @@ export class AssistantPanel {
 
   async loadModel() {
     if (!this.llm.supported) return;
+    this.llm.markFailed(false);
     try {
       await this.llm.load();
       this.cached.set(this.llm.modelId, true);

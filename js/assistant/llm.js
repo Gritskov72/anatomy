@@ -38,6 +38,8 @@ export class Llm {
     this.state = 'idle'; this.progress = 0; this.error = null;
     this.generating = false; this._loading = null;
     this.cache = new Map(); this.fns = new Set();
+    // модель, которая загрузилась, но не смогла ответить: без нажатия пользователя её больше не грузим
+    this.failedId = store.get('assist.llmFail', null);
   }
 
   on(fn) { this.fns.add(fn); return () => this.fns.delete(fn); }
@@ -114,6 +116,9 @@ export class Llm {
     })();
     return this._loading;
   }
+
+  markFailed(on) { this.failedId = on ? this.modelId : null; store.set('assist.llmFail', this.failedId); this.emit(); }
+  get usable() { return this.supported && this.failedId !== this.modelId; }
 
   /** Потоковый ответ. onDelta(кусок, весь текст). */
   async chat(messages, { onDelta, maxTokens = 480 } = {}) {

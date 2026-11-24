@@ -277,7 +277,7 @@ export class Agent {
     const ctx = { text, history, hits, docs, pin, mv, personal };
 
     // шаг 3: модель, если скачана
-    if (this.llm.supported && (this.llm.ready || (await this.llm.isCached()))) {
+    if (this.llm.usable && (this.llm.ready || (await this.llm.isCached()))) {
       try {
         if (!this.llm.ready) {
           set({ status: 'loading', progress: 0 });
@@ -291,13 +291,15 @@ export class Agent {
       } catch (err) {
         console.warn('Модель не ответила', err);
         if (run.stopped || bot.text) return;
+        this.llm.markFailed(true);
+        this.llm.unload();
         bot.hint = `Модель не ответила, ответ собран из атласа · ${String(err?.message || err || '').replace(/\s+/g, ' ').slice(0, 140)}`;
       }
     }
     if (run.stopped) return;
     say(this.local(ctx));
     bot.source = 'atlas';
-    if (!bot.hint && this.llm.supported) bot.hint = 'model';
+    if (!bot.hint && this.llm.usable) bot.hint = 'model';
   }
 
   // ---------- команды ----------
