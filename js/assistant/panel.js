@@ -50,6 +50,19 @@ export class AssistantPanel {
     this.search = new AtlasSearch(app.data);
     this.profile = new Profile();
     this.asr = new Asr();
+    // на iPhone распознавание не запускается, пока модель ответов занимает память: сначала распознавание, потом модель
+    const asrEnsure = this.asr.ensure.bind(this.asr);
+    this.asr.ensure = () => {
+      if (this.asr._ready) return asrEnsure();
+      if (!this._asrSeq) {
+        this._asrSeq = (async () => {
+          const had = this.llm.ready || this.llm.state === 'loading';
+          if (had) { try { await this.llm._loading; } catch (e) { /* загрузка модели сорвалась */ } await this.llm.unload(); }
+          try { await asrEnsure(); } finally { this._asrSeq = null; if (had) this.llm.load().catch(() => {}); }
+        })();
+      }
+      return this._asrSeq;
+    };
     this.rec = new Recorder();
     this.speaker = new Speaker();
     this.agent = new Agent(app, { llm: this.llm, search: this.search, profile: this.profile });
@@ -125,7 +138,9 @@ export class AssistantPanel {
     requestAnimationFrame(() => this.scrollEnd());
     this.refreshCached().then(() => {
       // скачанная модель прогревается заранее, чтобы первый ответ шёл без ожидания
-      if (this.llm.supported && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle') this.llm.load().catch(() => {});
+      if (!(this.llm.supported && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle')) return;
+      const first = this.asr.cached && this.asr.state !== 'ready' ? this.asr.ensure().catch(() => {}) : Promise.resolve();
+      first.then(() => { if (this.llm.state === 'idle') this.llm.load().catch(() => {}); });
     });
   }
 
