@@ -125,7 +125,7 @@ export class AssistantPanel {
     requestAnimationFrame(() => this.scrollEnd());
     this.refreshCached().then(() => {
       // скачанная модель прогревается заранее, чтобы первый ответ шёл без ожидания
-      if (this.llm.supported && this.cached.get(this.llm.modelId) && this.llm.state === 'idle') this.llm.load().catch(() => {});
+      if (this.llm.supported && !this.llm.crashed && this.cached.get(this.llm.modelId) && this.llm.state === 'idle') this.llm.load().catch(() => {});
     });
   }
 
@@ -465,6 +465,9 @@ export class AssistantPanel {
       <h2 class="sec">Модель ответов</h2>
       ${llm.supported ? '' : '<p class="note">В этом браузере нет WebGPU. Ассистент отвечает по атласу и вашим документам без модели</p>'}
       <div class="list">${models.map((m) => this.modelRow(m)).join('')}</div>
+      ${llm.crashed ? `<p class="note">Загрузка модели ${esc(MODEL_NAMES[llm.crashed] || '')} прервалась: телефону не хватило памяти. Для iPhone подходит Gemma 3 1B</p>
+        <button class="btn small" data-act="purge">${icon('trash', 18)}<span>Удалить недокачанные файлы</span></button>` : ''}
+      <p class="note">Перед загрузкой закройте другие приложения. Модели тяжелее 1 ГБ на телефоне могут закрыть страницу</p>
       <div class="as-ctl" id="as-model">${this.modelCtl()}</div>
       <p class="note" id="as-storage"></p>
       <h2 class="sec">Распознавание речи</h2>
@@ -682,6 +685,11 @@ export class AssistantPanel {
     else if (act === 'back-main') { this.view = 'main'; this.renderMain(); }
     else if (act === 'model') { this.llm.setModel(id); this.renderMain(); }
     else if (act === 'download' || act === 'load') this.loadModel();
+    else if (act === 'purge') {
+      try { await this.llm.remove(this.llm.crashed); toast('Файлы удалены'); } catch (err) { console.warn(err); toast('Не удалось удалить файлы'); }
+      await this.refreshCached();
+      this.renderMain();
+    }
     else if (act === 'unload') { await this.llm.unload(); this.renderMain(); }
     else if (act === 'remove') {
       if (!confirm(`Удалить модель ${MODEL_NAMES[this.llm.modelId] || ''} с устройства?`)) return;

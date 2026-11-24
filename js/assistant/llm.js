@@ -1,8 +1,10 @@
 // Модель ответов на устройстве: web-llm в отдельном воркере. Загрузка с прогрессом, потоковый ответ, остановка, выгрузка, удаление из кэша
 import { store } from '../ui.js';
 
-export const MODEL_IDS = ['gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'];
+// порядок от лёгкой к тяжёлой: первая в списке ставится по умолчанию и помещается в память телефона
+export const MODEL_IDS = ['gemma3-1b-it-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', 'gemma-2-2b-it-q4f16_1-MLC', 'gemma-4-E2B-it-q4f16_1-MLC'];
 export const MODEL_NAMES = {
+  'gemma3-1b-it-q4f16_1-MLC': 'Gemma 3 1B',
   'gemma-4-E2B-it-q4f16_1-MLC': 'Gemma 4 E2B',
   'gemma-2-2b-it-q4f16_1-MLC': 'Gemma 2 2B',
   'Qwen2.5-1.5B-Instruct-q4f16_1-MLC': 'Qwen 2.5 1.5B',
@@ -24,6 +26,14 @@ export class Llm {
     this.supported = typeof navigator !== 'undefined' && !!navigator.gpu;
     const saved = store.get('assist.model', MODEL_IDS[0]);
     this.modelId = MODEL_IDS.includes(saved) ? saved : MODEL_IDS[0];
+    // метка ставится перед загрузкой и снимается после неё: если она осталась, страница в прошлый раз закрылась посреди загрузки
+    const guard = store.get('assist.guard', null);
+    this.crashed = MODEL_IDS.includes(guard) ? guard : null;
+    if (guard) store.set('assist.guard', null);
+    if (this.crashed && this.modelId === this.crashed && this.crashed !== MODEL_IDS[0]) {
+      this.modelId = MODEL_IDS[0];
+      store.set('assist.model', this.modelId);
+    }
     this.engine = null; this.worker = null; this.loadedId = null;
     this.state = 'idle'; this.progress = 0; this.error = null;
     this.generating = false; this._loading = null;
@@ -74,6 +84,7 @@ export class Llm {
     this._loading = (async () => {
       await this.unload();
       this.state = 'loading'; this.progress = 0; this.error = null;
+      store.set('assist.guard', id);
       this.emit();
       const { CreateWebWorkerMLCEngine } = await lib();
       const worker = new Worker(new URL('./llm.worker.js', import.meta.url), { type: 'module' });
@@ -97,6 +108,7 @@ export class Llm {
         throw err;
       } finally {
         this._loading = null;
+        store.set('assist.guard', null);
         this.emit();
       }
     })();
@@ -139,6 +151,7 @@ export class Llm {
     const { deleteModelAllInfoInCache } = await lib();
     await deleteModelAllInfoInCache(id);
     this.cache.set(id, false);
+    if (this.crashed === id) this.crashed = null;
     if (this.state === 'error') { this.state = 'idle'; this.error = null; }
     this.emit();
   }
