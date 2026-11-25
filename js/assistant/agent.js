@@ -1,5 +1,5 @@
 // Логика ответа: команды показа в 3D без модели, поиск по атласу и личным данным, потоковый ответ модели или ответ из описаний атласа
-import { FIELD_RU, FIELD_KEYS, fieldText, searchDocs, words, stem, normText } from './search.js';
+import { FIELD_RU, FIELD_KEYS, fieldText, searchDocs, words, stem, normText, fixSpeech } from './search.js';
 import { PIN_LIMIT } from './profile.js';
 
 export const SUGGESTIONS = [
@@ -46,6 +46,7 @@ const cut = (s, n) => {
   return `${s.slice(0, i > n * 0.6 ? i : n - 1).replace(/[\s,;:.-]+$/, '')}…`;
 };
 const firstSentence = (s) => { const m = String(s || '').match(/^[\s\S]+?[.!?](?=\s|$)/); return cut(m ? m[0] : s, 220); };
+const twoSentences = (s) => String(s || '').trim().split(/(?<=[.!?…])\s+/).filter(Boolean).slice(0, 2).join(' ');
 const nameLat = (ru, lat) => `**${ru}**${lat ? ` (${lat})` : ''}`;
 
 // ---------------------------------------------------------------- разбор запроса
@@ -81,7 +82,7 @@ const MOVE_RE = /^(движени|сгибани|разгибани|отведе
 
 /** Команда показа или null. */
 export function parseCommand(text) {
-  const q = strip(prep(text));
+  const q = strip(prep(fixSpeech(text)));
   let m;
   if ((m = q.match(/^(?:покажи|покажите|запусти|включи)\s+(?:мне\s+)?движение(?:\s+(.+))?$/))) return { type: 'move', target: m[1] || '', q };
   if ((m = q.match(/^(?:включи|выключи|отключи|покажи|скрой|убери|спрячь|добавь)\s+(?:слой\s+|слои\s+)?(.+)$/))) {
@@ -158,8 +159,30 @@ function alternate(list) {
 }
 
 const DISCLAIM = /[^.!?\n]*(не (являюсь|заменя\S*)|обрат\S* к (врач|специалист)\S*|консультац\S* (врача|специалиста)|проконсультир\S*|не врач|языков\S* модел\S*|искусственн\S* интеллект\S*)[^.!?\n]*[.!?]?/gi;
-const tidy = (t) => String(t || '').replace(/[—–]/g, '-');
+const tidy = (t) => String(t || '').replace(/[\u2013\u2014]/g, '-');
 const tidyModel = (t) => tidy(t).replace(DISCLAIM, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+/, '');
+
+function cleanSpeech(s) {
+  return tidy(s)
+    .replace(/\*\*|__|[*_`#]/g, '')
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '')
+    .replace(/\s*\n+\s*/g, '. ')
+    .replace(/\.\s*\./g, '.')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function clipSpeech(s, max = 350) {
+  s = cleanSpeech(s);
+  if (s.length <= max) return s;
+  const sub = s.slice(0, max);
+  let i = Math.max(sub.lastIndexOf('.'), sub.lastIndexOf('!'), sub.lastIndexOf('?'));
+  if (i >= 40) return sub.slice(0, i + 1).trim();
+  i = Math.max(sub.lastIndexOf(';'), sub.lastIndexOf(','));
+  if (i >= max * 0.5) return sub.slice(0, i).trim();
+  i = sub.lastIndexOf(' ');
+  return (i > max * 0.5 ? sub.slice(0, i) : sub).replace(/[,;:\s-]+$/, '');
+}
 
 const hitChip = (data, h) => ({ kind: h.kind, id: h.id, ids: h.ids, label: h.ru, sub: h.kind === 'group' ? 'группа' : '', color: data.systemById.get(h.system)?.color || '' });
 /** Миофасциальная линия по словам запроса: совпадение по началам слов названия. */
@@ -183,7 +206,10 @@ function uniqChips(list) {
   return out;
 }
 
-const pack = (m) => ({ id: m.id, role: m.role, text: m.text || '', chips: m.chips || [], hint: m.hint || null, status: m.status === 'stopped' ? 'stopped' : 'done', at: m.at });
+const pack = (m) => ({
+  id: m.id, role: m.role, text: m.text || '', ...(m.speech ? { speech: m.speech } : {}),
+  chips: m.chips || [], hint: m.hint || null, status: m.status === 'stopped' ? 'stopped' : 'done', at: m.at,
+});
 
 // ---------------------------------------------------------------- агент
 export class Agent {
@@ -226,7 +252,14 @@ export class Agent {
     const hooks = {
       run, history,
       set: (patch) => { Object.assign(bot, patch); onMessage(bot); },
-      say: (t) => { if (!t) return; const add = bot.text ? `\n\n${t}` : t; bot.text = tidy(bot.text + add); onDelta(add); onMessage(bot); },
+      say: (t, spoken) => {
+        if (!t) return;
+        const add = bot.text ? `\n\n${t}` : t;
+        bot.text = tidy(bot.text + add);
+        if (spoken !== undefined) bot.speech = tidy(spoken);
+        onDelta(spoken !== undefined ? bot.speech : add);
+        onMessage(bot);
+      },
       stream: (d) => { bot.raw = (bot.raw || '') + d; bot.text = tidy(bot.raw).replace(/^\s+/, ''); onDelta(d); onMessage(bot); },
     };
     try { await this.answer(user.text, bot, hooks); }
@@ -243,6 +276,7 @@ export class Agent {
 
   async answer(text, bot, { run, history, set, say, stream }) {
     const S = this.search, data = this.app.data;
+    text = fixSpeech(text);
     const q = prep(text);
 
     // шаг 1: команды выполняются сразу, без модели
@@ -297,7 +331,8 @@ export class Agent {
       }
     }
     if (run.stopped) return;
-    say(this.local(ctx));
+    const loc = this.local(ctx);
+    say(loc.text, loc.speech);
     bot.source = 'atlas';
     if (!bot.hint && this.llm.usable) bot.hint = 'model';
   }
@@ -457,10 +492,18 @@ export class Agent {
   // ---------- ответ без модели ----------
   local({ text, hits, docs, pin, mv, personal }) {
     const data = this.app.data, intent = intentFields(text), out = [];
+    let speech = '';
     if (personal) {
-      if (docs.length) out.push(`**Из ваших данных**\n${docs.slice(0, 2).map((d) => `«${d.doc.title}»: ${cut(d.text.replace(/\s+/g, ' '), 360)}`).join('\n')}`);
-      else if (pin) out.push(`**Из ваших данных** («${pin.title}»)\n${cut(pin.text, 500)}`);
-      else out.push('Личных документов пока нет. Добавьте их в настройках ассистента, раздел «Мои данные»');
+      if (docs.length) {
+        out.push(`**Из ваших данных**\n${docs.slice(0, 2).map((d) => `«${d.doc.title}»: ${cut(d.text.replace(/\s+/g, ' '), 360)}`).join('\n')}`);
+        speech = `${docs[0].doc.title}. ${twoSentences(docs[0].text.replace(/\s+/g, ' '))}`;
+      } else if (pin) {
+        out.push(`**Из ваших данных** («${pin.title}»)\n${cut(pin.text, 500)}`);
+        speech = `${pin.title}. ${twoSentences(pin.text.replace(/\s+/g, ' '))}`;
+      } else {
+        out.push('Личных документов пока нет. Добавьте их в настройках ассистента, раздел «Мои данные»');
+        speech = out[0];
+      }
     }
     if (mv) {
       const ag = itemNames(data, mv.agonists), an = itemNames(data, mv.antagonists);
@@ -468,20 +511,43 @@ export class Agent {
       if (ag.length) lines.push(`Агонисты: ${ag.join(', ')}`);
       if (an.length) lines.push(`Антагонисты: ${an.join(', ')}`);
       if (lines.length > 1) out.push(lines.join('\n'));
+      if (!speech) speech = `${mv.ru}${ag.length ? `. Основные мышцы: ${ag.join(', ')}` : ''}`;
     }
     const top = hits[0];
-    if (top) {
+    const moveFocus = mv && (intent.includes('action') || intent.includes('motions') || /мышц/.test(normText(text)));
+    const moveSet = moveFocus ? new Set([...(mv.agonists || []), ...(mv.antagonists || []), ...(mv.moving || [])]) : null;
+    const showTop = top && (!moveSet || (top.ids?.length ? top.ids : [top.id]).some((id) => moveSet.has(id)));
+    if (showTop) {
       const t = top.text || {};
       const lines = [nameLat(top.ru, top.lat)];
-      if (t.summary) lines.push(t.summary);
-      const keys = (intent.length ? intent : DEFAULT_KEYS[top.system] || []).filter((k) => k !== 'summary' && t[k]).slice(0, 3);
-      for (const k of keys) lines.push(`${FIELD_RU[k]}: ${fieldText(t[k])}`);
+      const ikeys = intent.filter((k) => k !== 'summary' && t[k]).slice(0, 3);
+      if (ikeys.length) {
+        for (const k of ikeys) lines.push(`${FIELD_RU[k]}: ${fieldText(t[k])}`);
+        if (t.summary) lines.push(firstSentence(t.summary));
+      } else {
+        if (t.summary) lines.push(t.summary);
+        if (!(intent.includes('summary') && t.summary)) {
+          const dkeys = (DEFAULT_KEYS[top.system] || []).filter((k) => k !== 'summary' && t[k]).slice(0, 3);
+          for (const k of dkeys) lines.push(`${FIELD_RU[k]}: ${fieldText(t[k])}`);
+        }
+      }
       if (lines.length === 1) for (const s of top.snippets || []) lines.push(`${s.label}: ${s.text}`);
       out.push(lines.join('\n'));
-      const more = hits.slice(1, 3).filter((h) => h.text?.summary);
-      if (more.length) out.push(`Ещё по теме:\n${more.map((h) => `- ${nameLat(h.ru, h.lat)} - ${firstSentence(h.text.summary)}`).join('\n')}`);
+      if (!speech) {
+        const ruName = top.ru.replace(/\s*\([^()]*[a-z][^()]*\)/gi, '').trim();
+        const body = intent[0] === 'summary' && t.summary ? twoSentences(t.summary)
+          : ikeys.length ? ikeys.map((k) => `${FIELD_RU[k]}: ${fieldText(t[k]).replace(/[.!?\s]+$/, '')}`).join('. ')
+          : t.summary ? twoSentences(t.summary)
+          : top.snippets?.[0] ? `${top.snippets[0].label}: ${top.snippets[0].text}` : '';
+        speech = body ? `${ruName}. ${body}` : ruName;
+      }
+      if (!intent.length && !mv) {
+        const more = hits.slice(1, 3).filter((h) => h.text?.summary);
+        if (more.length) out.push(`Ещё по теме:\n${more.map((h) => `- ${nameLat(h.ru, h.lat)} - ${firstSentence(h.text.summary)}`).join('\n')}`);
+      }
     }
     if (!out.length) out.push('В атласе по этому вопросу ничего не нашлось. Попробуйте назвать структуру по-другому или по-латыни');
-    return out.join('\n\n');
+    const resText = tidy(out.join('\n\n'));
+    return { text: resText, speech: clipSpeech(speech || resText) };
   }
 }

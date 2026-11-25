@@ -202,6 +202,7 @@ export class AssistantPanel {
 
   hintHtml(m) {
     if (!m.hint) return '';
+    if (!this.llm.enabled && (m.hint === 'model' || String(m.hint).startsWith('Модель не ответила'))) return '';
     if (m.hint === 'model') return '<p class="msg-hint">Для развёрнутых ответов скачайте модель <button data-act="settings">в настройках</button></p>';
     return `<p class="msg-hint">${esc(m.hint)}</p>`;
   }
@@ -295,9 +296,10 @@ export class AssistantPanel {
   sayMsg(id) {
     if (this.speaker.speaking) { this.speaker.stop(); return; }
     const m = this.agent.messages.find((x) => x.id === id);
-    if (!m?.text) return;
+    const text = m?.speech || m?.text;
+    if (!text) return;
     this.speaker.unlock();
-    this.speaker.say(m.text);
+    this.speaker.say(text);
   }
 
   openChip(b) {
@@ -366,6 +368,7 @@ export class AssistantPanel {
   asrProgress() {
     const a = this.asr;
     if (a.state !== 'loading') return '';
+    if (a.cached && (!a.loaded || !Math.round(a.progress * 100))) return '';
     return `Загрузка распознавания речи ${Math.round(a.progress * 100)}%${a.total ? ` · ${fmtSize(a.loaded)} из ${fmtSize(a.total)}` : ''}`;
   }
 
@@ -584,7 +587,7 @@ export class AssistantPanel {
 
   asrCtl() {
     const a = this.asr;
-    const status = a.state === 'loading' ? this.asrProgress() : a.state === 'ready' ? 'Готово к работе' : a.state === 'error' ? `Не загрузилось: ${String(a.error?.message || a.error || 'причина неизвестна').slice(0, 160)}`
+    const status = a.state === 'loading' ? (this.asrProgress() || 'Подготовка') : a.state === 'ready' ? 'Готово к работе' : a.state === 'error' ? `Не загрузилось: ${String(a.error?.message || a.error || 'причина неизвестна').slice(0, 160)}`
       : a.cached ? 'Скачано на устройство' : 'Скачается при первом голосовом вопросе';
     let html = `<div class="list"><div class="row static"><span class="row-main"><span class="row-title">Whisper base</span><span class="row-lat plain">${esc(status)}</span></span></div></div>`;
     if (a.state === 'loading') html += `<div class="progress"><i style="width:${Math.max(2, Math.round(a.progress * 100))}%"></i></div>`;
@@ -709,7 +712,7 @@ export class AssistantPanel {
     const { act, id } = b.dataset;
     if (act === 'close') this.closeSettings();
     else if (act === 'back-main') { this.view = 'main'; this.renderMain(); }
-    else if (act === 'llm-toggle') { this.llm.setEnabled(!this.llm.enabled); this.renderMain(); }
+    else if (act === 'llm-toggle') { this.llm.setEnabled(!this.llm.enabled); this.renderMain(); if (this.agent.messages.length) this.renderLog(); }
     else if (act === 'model') { this.llm.setModel(id); this.renderMain(); }
     else if (act === 'download' || act === 'load') this.loadModel();
     else if (act === 'purge') {

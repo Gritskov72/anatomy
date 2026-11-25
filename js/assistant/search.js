@@ -39,24 +39,105 @@ export function stem(w) {
   return s;
 }
 
+// частые ослышки распознавания речи: таблица [регулярка, замена]
+const SPEECH_FIXES = [
+  [/(?<![а-яё])(?:не\s*веру(?:ет|ют)|[иеэ]нервиру(?:ет|ют)|нервиру(?:ет|ют)|иннервируют)(?![а-яё])/gi, 'иннервирует'],
+  [/(?<![а-яё])(?:не\s*веруется|[иеэ]нервируется|нервируется)(?![а-яё])/gi, 'иннервируется'],
+  [/(?<![а-яё])[иеэ]нерваци/gi, 'иннерваци'],
+  [/(?<![а-яё])двух\s*глав/gi, 'двуглав'],
+  [/(?<![а-яё])тр[её]х\s+глав/gi, 'трёхглав'],
+  [/(?<![а-яё])четыр[её]х\s+глав/gi, 'четырёхглав'],
+  [/(?<![а-яё])кров[оа]\s+снабж/gi, 'кровоснабж'],
+  [/(?<![а-яё])под\s*здошн/gi, 'подвздошн'],
+  [/(?<![а-яё])кресц/gi, 'крестц'],
+];
+
+/** Нормализация частых ослышек речи до поиска и определения намерения. */
+export function fixSpeech(text) {
+  let s = String(text ?? '');
+  for (const [re, to] of SPEECH_FIXES) s = s.replace(re, to);
+  return s;
+}
+
 // разговорные слова и основы прилагательных из названий
 const SYN = {
   локот: ['локтев'], локт: ['локтев'], шея: ['шейн'], шеи: ['шейн'], шею: ['шейн'], поясниц: ['поясничн'], таз: ['тазов'],
   сердц: ['сердечн'], лопатк: ['лопаточн'], ребр: ['реберн'], ключиц: ['ключичн'], палец: ['пальц'], живот: ['брюшн'],
   колен: ['коленн'], плеч: ['плечев'], бедр: ['бедренн'], стоп: ['стопн'],
+  солнечн: ['чревн'], чашечк: ['надколенник'],
+  бицепс: ['двуглав', 'мышц', 'плеч'], трицепс: ['трехглав', 'мышц', 'плеч'], квадрицепс: ['четырехглав', 'мышц', 'бедр'],
+  дельт: ['дельтовидн', 'мышц'], трапц: ['трапециевидн', 'мышц'], широчайш: ['широчайш', 'мышц', 'спин'],
+  пресс: ['прям', 'мышц', 'живот'], икр: ['икроножн', 'мышц'], ягодиц: ['больш', 'ягодичн', 'мышц'],
+  ахилл: ['пяточн', 'сухожил'], ахиллов: ['пяточн', 'сухожил'], кадык: ['щитовидн', 'хрящ'],
 };
+
+const SOLO_BONE = new Set(['бедр']);
+const SIDE_STEMS = new Set(['лев', 'прав', 'слев', 'справ']);
 
 /** Слова запроса без служебных: группы вариантов (основа и синонимы). */
 export function queryGroups(text) {
-  const out = [], seen = new Set();
+  const raw = [];
   for (const w of words(text)) {
     if (STOP.has(w) || (w.length < 2 && !/\d/.test(w))) continue;
-    const s = stem(w);
-    if (seen.has(s)) continue;
-    seen.add(s);
-    out.push([s, ...(SYN[s] || SYN[w] || [])]);
+    raw.push([w, stem(w)]);
+  }
+  const stems = new Set(raw.map(([, s]) => s));
+  const nonSide = [...stems].filter((s) => !SIDE_STEMS.has(s));
+  const out = [], seen = new Set();
+  const push = (g, wlen = 0) => {
+    const uniq = [...new Set(g)];
+    if (seen.has(uniq[0])) return;
+    if (wlen) uniq.wlen = wlen;
+    for (const x of uniq) seen.add(x);
+    out.push(uniq);
+  };
+  for (const [w, s] of raw) {
+    if ((s === 'колен' || s === 'коленн') && stems.has('чашечк')) continue;
+    const syn = SYN[s] || SYN[w];
+    if (syn && syn.length > 1) {
+      push([s, syn[0]], w.length);
+      for (const x of syn.slice(1)) {
+        if (x === 'мышц' && stems.has('кост')) continue;
+        if (x === 'плеч' && stems.has('бедр')) continue;
+        push([x, ...(SYN[x]?.length === 1 ? SYN[x] : [])]);
+      }
+    } else {
+      push([s, ...(syn || [])], w.length);
+      if (SOLO_BONE.has(s) && nonSide.length === 1) push(['кост']);
+    }
   }
   return out;
+}
+
+const phonCache = new Map();
+function phon(s) {
+  let p = phonCache.get(s);
+  if (p === undefined) {
+    p = s.replace(/о/g, 'а').replace(/[еэ]/g, 'и').replace(/[щч]/g, 'ш').replace(/([бвгджзклмнпрстфхцчшщ])\1+/g, '$1');
+    phonCache.set(s, p);
+  }
+  return p;
+}
+
+function damLev(a, b, max = 2) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > max) return max + 1;
+  if (a === b) return 0;
+  let pp = null, prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, pp[j - 2] + 1);
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    pp = prev; prev = cur;
+  }
+  return prev[n];
 }
 
 const bigrams = (w) => { const s = new Set(); for (let i = 0; i < w.length - 1; i++) s.add(w.slice(i, i + 2)); return s; };
@@ -70,13 +151,14 @@ function buildBigrams(vocab) {
   return idx;
 }
 
-/** Термы словаря, подходящие под группу запроса: точное совпадение, общий префикс, опечатка по биграммам. */
+/** Термы словаря, подходящие под группу запроса: точное совпадение, общий префикс, фонетическая близость и биграммы. */
 function expand(group, vocab, bigramIndex) {
   const out = new Map();
   const add = (t, f) => { if (f > (out.get(t) || 0)) out.set(t, f); };
+  let exact = false;
   group.forEach((q, gi) => {
     const k = gi ? 0.9 : 1;
-    if (vocab.has(q)) add(q, k);
+    if (vocab.has(q)) { add(q, k); exact = true; }
     if (q.length >= 4 && /[а-яa-z]/.test(q)) {
       for (const t of vocab.keys()) {
         if (t === q || t.length < 4) continue;
@@ -85,14 +167,34 @@ function expand(group, vocab, bigramIndex) {
       }
     }
   });
-  const q = group[0];
-  if (!out.size && q.length >= 5 && bigramIndex) {
-    const bg = bigrams(q), idx = bigramIndex(), cnt = new Map();
-    for (const b of bg) for (const t of idx.get(b) || []) cnt.set(t, (cnt.get(t) || 0) + 1);
-    const cand = [];
-    for (const [t, n] of cnt) { const dice = (2 * n) / (bg.size + bigrams(t).size); if (dice >= 0.62) cand.push([t, dice]); }
-    cand.sort((a, b) => b[1] - a[1]);
-    for (const [t, d] of cand.slice(0, 5)) add(t, 0.55 * d);
+  const q = group[0], wlen = group.wlen ?? q.length;
+  if (!exact && wlen >= 6 && q.length >= 5) {
+    const maxDist = q.length >= 6 ? 2 : 0;
+    if (/[а-я]/.test(q)) {
+      const pq = phon(q);
+      if (pq.length >= 4) {
+        let bestD = maxDist + 1;
+        const cand = [];
+        for (const [t, val] of vocab) {
+          if (!val || t.length < 5 || !/[а-я]/.test(t)) continue;
+          const d = damLev(pq, phon(t), bestD <= maxDist ? bestD : maxDist);
+          if (d > maxDist || d > bestD) continue;
+          if (d < bestD) { bestD = d; cand.length = 0; }
+          cand.push([t, damLev(q, t, 4)]);
+        }
+        cand.sort((a, b) => a[1] - b[1]);
+        const w = bestD === 0 ? 0.85 : bestD === 1 ? 0.72 : 0.58;
+        for (const [t] of cand.slice(0, 3)) add(t, w);
+      }
+    }
+    if (!out.size && q.length >= 6 && bigramIndex) {
+      const bg = bigrams(q), idx = bigramIndex(), cnt = new Map();
+      for (const b of bg) for (const t of idx.get(b) || []) cnt.set(t, (cnt.get(t) || 0) + 1);
+      const cand = [];
+      for (const [t, n] of cnt) { const dice = (2 * n) / (bg.size + bigrams(t).size); if (dice >= 0.62) cand.push([t, dice]); }
+      cand.sort((a, b) => b[1] - a[1]);
+      for (const [t, d] of cand.slice(0, 5)) add(t, 0.55 * d);
+    }
   }
   return out;
 }
